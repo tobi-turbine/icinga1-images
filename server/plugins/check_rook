@@ -74,7 +74,7 @@ if [ "$NOT_BOUND_COUNT" -ge "$NOT_BOUND_WARN" ]; then
         echo "[WARN] $NOT_BOUND pvs are not bounding: $NOT_BOUND"
         exit $STATE_WARNING
 fi
-if [ "$NOT_RUNNING_COUNT" -ge "$NOT_BOUND_CRIT" ]; then
+if [ "$NOT_BOUND_COUNT" -ge "$NOT_BOUND_CRIT" ]; then
         echo "[CRIT] $NOT_BOUND pvs are not bounding: $NOT_BOUND"
         exit $STATE_CRITICAL
 fi
