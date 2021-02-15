@@ -11,12 +11,13 @@ REVISION=`echo '$Revision: 1749 $' | sed -e 's/[^0-9.]//g'`
 #Function to print Usage
 function usage
 {
-echo "Usage: $0 -s [apiserver endpoint] -i [incomplete warning] -I [incomplete critical]"
+echo "Usage: $0 -s [apiserver endpoint] -r [not bound warning] -R [not bound critical]"
 exit $STATE_UNKNOWN
 }
 
-UNBOUNDWARN=1
-UNBOUND_CRIT=2
+NOT_BOUND_WARN=1
+NOT_BOUND_CRIT=2
+
 APISERVER=https://kubernetes.default.svc
 #####################################################################
 # get parameter values in Variables
@@ -26,12 +27,12 @@ while test -n "$1"; do
          -h)
             usage
             ;;
-         -i)
-            UNBOUND_WARN=$2
+         -r)
+            NOT_BOUND_WARN=$2
             shift
             ;;
-         -I)
-            UNBOUND_CRIT=$2
+         -R)
+            NOT_BOUND_CRIT=$2
             shift
             ;;
          -s)
@@ -51,6 +52,7 @@ done
 TOKEN=$(cat /run/secrets/kubernetes.io/serviceaccount/token)
 KUBECTL="kubectl --server $APISERVER --token $TOKEN --certificate-authority=/run/secrets/kubernetes.io/serviceaccount/ca.crt"
 
+
 STATUS=$( $KUBECTL version 2>&1 )
 if [ $? -ne 0 ]; then
         echo "[ERR] failed to connect to apiserver: $STATUS"
@@ -61,16 +63,21 @@ if [ "$STATUS" == "" ]; then
         exit $STATE_UNKNOWN
 fi
 
-ALL_PODS=$( $KUBECTL --all-namespaces=true get pvc --no-headers=true )
-UNBOUND_PVCS=$( echo "$ALL_PODS" | grep Unbound | awk -F ' ' '{print $3}' | awk -F / '{ if ($1 != $2) print "incomplete" }' | wc -l )
-if [ "$UNBOUND_PVCS" -ge "$UNBOUND_WARN" ]; then
-        echo "[WARN] $UNBOUND_PVCS pvs are in a unbound state"
+OLD=$( tempfile )
+NEW=$( tempfile )
+curl --silent --fail 'http://metrics-prometheus-operato-prometheus.metrics.svc:9090/api/v1/query?query=kube_persistentvolumeclaim_status_phase\{job="kube-state-metrics",namespace!~".*ci.*",phase=~"Pending|Unknown|Lost"\}%20offset%205m%20>0' | jq -M -r '.data.result[].metric | "\(.namespace)/\(.pod)"' > ${OLD}
+curl --silent --fail 'http://metrics-prometheus-operato-prometheus.metrics.svc:9090/api/v1/query?query=kube_persistentvolumeclaim_status_phase\{job="kube-state-metrics",namespace!~".*ci.*",phase=~"Pending|Unknown|Lost"\}>0' | jq -M -r '.data.result[].metric | "\(.namespace)/\(.pod)"' > ${NEW}
+NOT_BOUND=$( cat ${OLD} ${NEW} | sort | uniq -c | awk '{ if ($1 >= 2) print $2 }' )
+NOT_BOUND_COUNT=$( echo -n "$NOT_BOUND" | wc -l )
+rm ${OLD} ${NEW}
+if [ "$NOT_BOUND_COUNT" -ge "$NOT_BOUND_WARN" ]; then
+        echo "[WARN] $NOT_BOUND pvs are not bounding: $NOT_BOUND"
         exit $STATE_WARNING
 fi
-if [ "$UNBOUND_PVCS" -ge "$UNBOUND_CRIT" ]; then
-        echo "[CRIT] $UNBOUND_PVCS pvs are in a unbound state"
+if [ "$NOT_RUNNING_COUNT" -ge "$NOT_BOUND_CRIT" ]; then
+        echo "[CRIT] $NOT_BOUND pvs are not bounding: $NOT_BOUND"
         exit $STATE_CRITICAL
 fi
 
-echo "[OK] rook are in a healthy state"
+echo "[OK] all pvs look healthy"
 exit $STATE_OK
